@@ -1,8 +1,12 @@
 package jwt_middleware
 
 import (
+	"context"
+	"log"
+	"loginsrv/db"
 	"loginsrv/http_service"
 	"loginsrv/utils"
+	"net/http"
 	"time"
 
 	jwt "github.com/appleboy/gin-jwt/v2"
@@ -68,12 +72,36 @@ func JwtMiddleware() (authMiddleware *jwt.GinJWTMiddleware, err error) {
 				NickName: user.Nickname.String,
 			}, nil
 		},
+		LoginResponse: func(c *gin.Context, status int, tokenString string, expire time.Time) {
+			ctx := context.Background()
+			token, _ := authMiddleware.ParseTokenString(tokenString)
+			claims := jwt.ExtractClaimsFromToken(token)
+			UserName := claims[identityKey].(string)
+
+			db.RedisClient.Set(ctx, "token:"+UserName, tokenString, authMiddleware.Timeout)
+
+			c.JSON(http.StatusOK, gin.H{
+				"code":   http.StatusOK,
+				"token":  tokenString,
+				"expire": expire.Format(time.RFC3339),
+			})
+		},
 		Authorizator: func(data interface{}, c *gin.Context) bool {
-			if v, ok := data.(*User); ok && v.UserName == "admin" {
+			token := jwt.GetToken(c)
+
+			user := data.(*User)
+			ctx := context.Background()
+			userToken := db.RedisClient.Get(ctx, "token:"+user.UserName)
+			log.Println(userToken)
+			if userToken.Val() == token {
 				return true
 			}
 
 			return false
+			//if v, ok := data.(*User); ok && v.UserName == "root" {
+			//	return true
+			//}
+			//return false
 		},
 		Unauthorized: func(c *gin.Context, code int, message string) {
 			c.JSON(code, gin.H{
